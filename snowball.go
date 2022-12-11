@@ -60,7 +60,7 @@ func (txValidation *TxValidation) snowBall() bool {
 				} else {
 					countF++
 				}
-			case <-errChan: // TODO: Can log errors
+			case <-errChan: // Can log errors
 			}
 		}
 
