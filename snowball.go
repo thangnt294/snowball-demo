@@ -1,63 +1,70 @@
 package main
 
-import "math/rand"
+import (
+	"math/rand"
+)
 
-type DecisionReply struct {
-	Decision bool
+type DecisionOnTx struct {
+	Decision int
 	Tx       int
 }
 
 type TxValidation struct {
-	Addrs             []chan NodeMsg // Addresses of all nodes in the network to ask
-	Resp              chan bool      // Channel to receive responses
-	Tx                int            // Transaction to be validated
-	SampleSize        int            // Number of nodes to ask
-	QuorumSize        int            // Minimum number of same responses needed to adopt a new preference
-	DecisionThreshold int            // Number of consecutive quorum needed to make a final decision
-	NodeId            int            // ID of the node trying to validate the tx
-	Pref              bool           // Current preference
+	Node *Node // The node trying to validate this tx
+	Tx   int   // Transaction to be validated
+	Pref bool  // Current preference
 }
 
 const (
 	NEW = iota
-	WAITING_FOR_DECISION
-	DECIDED_FALSE
-	DECIDED_TRUE
+	WAITING
+	INVALID
+	VALID
 )
 
-// decideOnTx decides if the Tx is valid or not, then sends the decision back to replyChan.
-func (txValidation *TxValidation) decideOnTx(replyChan chan DecisionReply) {
-	decision := txValidation.snowBall()
-	replyChan <- DecisionReply{Decision: decision, Tx: txValidation.Tx}
+// decideOnTx decides if the Tx is valid or not, then sends the decision back to decisionChan.
+func (txValidation *TxValidation) decideOnTx() {
+	var decision int
+	isValid := txValidation.snowBall()
+	if isValid {
+		decision = VALID
+	} else {
+		decision = INVALID
+	}
+	txValidation.Node.DecisionChan <- DecisionOnTx{Decision: decision, Tx: txValidation.Tx}
 }
 
 // snowBall implements the snowball algorithm.
 func (txValidation *TxValidation) snowBall() bool {
 	var decision bool
-	myMsg := NodeMsg{txValidation.NodeId, txValidation.Tx, txValidation.Resp}
 
 	decided := false
 	consecutiveSuccesses := 0
 	for !decided {
+		resChan := make(chan bool, txValidation.Node.SampleSize)
+		errChan := make(chan error, txValidation.Node.SampleSize)
 		// ask random nodes
-		nodesToAsk := randomNodesToAsk(txValidation.NodeId, len(txValidation.Addrs), txValidation.SampleSize)
-		for _, id := range nodesToAsk {
-			txValidation.Addrs[id] <- myMsg
+		nodesToAsk := randomNodesToAsk(txValidation.Node.SampleSize, txValidation.Node.Neighbors)
+		for _, node := range nodesToAsk {
+			go askToValidateTx(node, txValidation.Tx, resChan, errChan)
 		}
 
 		// collect responses
 		countT := 0
 		countF := 0
-		for i := 0; i < txValidation.SampleSize; i++ {
-			ans := <-txValidation.Resp
-			if ans {
-				countT++
-			} else {
-				countF++
+		for i := 0; i < txValidation.Node.SampleSize; i++ {
+			select {
+			case pref := <-resChan:
+				if pref {
+					countT++
+				} else {
+					countF++
+				}
+			case <-errChan: // TODO: Can log errors
 			}
 		}
 
-		if countT >= txValidation.QuorumSize {
+		if countT >= txValidation.Node.QuorumSize {
 			newPref := true
 			if newPref == txValidation.Pref {
 				consecutiveSuccesses++
@@ -65,7 +72,7 @@ func (txValidation *TxValidation) snowBall() bool {
 				consecutiveSuccesses = 1
 			}
 			txValidation.Pref = newPref
-		} else if countF >= txValidation.QuorumSize {
+		} else if countF >= txValidation.Node.QuorumSize {
 			newPref := false
 			if newPref == txValidation.Pref {
 				consecutiveSuccesses++
@@ -77,7 +84,7 @@ func (txValidation *TxValidation) snowBall() bool {
 			consecutiveSuccesses = 0
 		}
 
-		if consecutiveSuccesses >= txValidation.DecisionThreshold { // decided
+		if consecutiveSuccesses >= txValidation.Node.DecisionThreshold { // decided
 			decided = true
 			decision = txValidation.Pref
 		}
@@ -86,17 +93,17 @@ func (txValidation *TxValidation) snowBall() bool {
 	return decision
 }
 
-// randomNodesToAsk randomizes and returns a list of nodes in the network to ask.
-func randomNodesToAsk(nodeId, n, sampleSize int) []int {
+// randomNodesToAsk randomizes and returns a list of nodes from the neighbor list to ask.
+func randomNodesToAsk(sampleSize int, neighbors []int) []int {
 	nodesToAsk := make([]int, 0) // pool of k nodes to ask
 
 	nodeSet := make(map[int]struct{})
 	for i := 0; i < sampleSize; i++ {
-		r := rand.Intn(n)
-		for _, ok := nodeSet[r]; ok || r == nodeId; _, ok = nodeSet[r] { // retrying until getting a new node
-			r = rand.Intn(n)
+		nodeToAsk := neighbors[rand.Intn(len(neighbors))]
+		for _, ok := nodeSet[nodeToAsk]; ok; _, ok = nodeSet[nodeToAsk] { // retrying until getting a new node
+			nodeToAsk = neighbors[rand.Intn(len(neighbors))]
 		}
-		nodeSet[r] = struct{}{}
+		nodeSet[nodeToAsk] = struct{}{}
 	}
 	for node := range nodeSet {
 		nodesToAsk = append(nodesToAsk, node)
