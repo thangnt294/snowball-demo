@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"sync"
 )
 
 type Node struct {
@@ -14,11 +15,14 @@ type Node struct {
 	Neighbors         []int             // Addresses of the neighbor nodes
 	Chain             []int             // Local chain of the node
 	ValidTxThreshold  int               // Threshold to decide if a transaction is valid or not
-	DecisionMap       map[int]int       // Map of already-decided transactions
+	DecisionMap       sync.Map          // Map of already-decided transactions
 	DecisionChan      chan DecisionOnTx // Channel to listen to decisions made on tx
 	SampleSize        int               // Number of nodes to ask each time
 	QuorumSize        int               // Number of nodes required to have the same answers for consensus
 	DecisionThreshold int               // Number of consecutive successes needed to arrive to a decision
+}
+
+type DecisionMap struct {
 }
 
 const (
@@ -36,7 +40,6 @@ func (node *Node) start() {
 	node.QuorumSize = config.NodeConf.QuorumSize
 	node.DecisionThreshold = config.NodeConf.DecisionThreshold
 
-	node.DecisionMap = make(map[int]int)
 	node.DecisionChan = make(chan DecisionOnTx)
 
 	go node.handleDecisionOnTx()
@@ -71,9 +74,11 @@ func createTxHandler(w http.ResponseWriter, r *http.Request, node *Node) {
 	} else {
 		pref = false
 	}
-	if node.DecisionMap[req.Tx] == INVALID {
+
+	v, ok := node.DecisionMap.Load(req.Tx)
+	if ok && v.(int) == INVALID {
 		fmt.Println("False transaction. Will not propagate.")
-	} else if node.DecisionMap[req.Tx] == WAITING {
+	} else if ok && v.(int) == WAITING {
 		fmt.Println("Transaction being validated. Will not propagate.")
 	} else {
 		fmt.Println("New transaction. Asking around for decision.")
@@ -99,17 +104,16 @@ func validateHandler(w http.ResponseWriter, r *http.Request, node *Node) {
 		return
 	}
 
-	currentDecision := node.DecisionMap[req.Tx]
-	if currentDecision != NEW && currentDecision != WAITING { // already decided
+	v, ok := node.DecisionMap.Load(req.Tx)
+	if ok && v.(int) != NEW && v.(int) != WAITING { // already decided
 		var decision bool
-		if currentDecision == VALID {
+		if v.(int) == VALID {
 			decision = true
 		}
 
 		res := TxValidationResponse{
 			Pref: decision,
 		}
-
 		writeJSONResponse(w, r, res)
 	} else {
 		// build an initial preference
@@ -120,7 +124,7 @@ func validateHandler(w http.ResponseWriter, r *http.Request, node *Node) {
 			pref = false
 		}
 
-		if currentDecision == NEW { // first encounter, need to ask around
+		if !ok { // first encounter, need to ask around
 			node.DecisionChan <- DecisionOnTx{Tx: req.Tx, Decision: WAITING}
 			txValidation := TxValidation{
 				Node: node,
@@ -161,7 +165,7 @@ func askToValidateTx(nodeAddr int, tx int, resChan chan<- bool, errChan chan<- e
 // handleDecisionOnTx handles the decision signals and updates the decision map accordingly.
 func (node *Node) handleDecisionOnTx() {
 	for decisionOnTx := range node.DecisionChan {
-		node.DecisionMap[decisionOnTx.Tx] = decisionOnTx.Decision
+		node.DecisionMap.Store(decisionOnTx.Tx, decisionOnTx.Decision)
 
 		// add to chain if valid
 		if decisionOnTx.Decision == VALID {
