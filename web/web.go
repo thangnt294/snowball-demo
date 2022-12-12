@@ -1,6 +1,7 @@
-package main
+package web
 
 import (
+	"ava/network"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+
+	"ava/config"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -17,8 +20,8 @@ type ApiMsg struct {
 	Data string
 }
 
-// startWebServer starts the web server and listens for API requests.
-func startWebServer(network []Node) {
+// StartWebServer starts the web server and listens for API requests.
+func StartWebServer(network []network.Node) {
 	app := fiber.New()
 
 	app.Post("/createTx/:val", func(c *fiber.Ctx) error { // create a tx in network
@@ -48,7 +51,7 @@ func startWebServer(network []Node) {
 		return c.SendString("OK")
 	})
 
-	app.Get("/chain", func(c *fiber.Ctx) error { // list all local chain in network
+	app.Get("/chains", func(c *fiber.Ctx) error { // list all local chain in network
 		for i := 0; i < len(network); i++ {
 			url := fmt.Sprintf("http://localhost:%d/listChain", network[i].Addr)
 			go http.Get(url)
@@ -56,5 +59,17 @@ func startWebServer(network []Node) {
 		return c.SendString("OK")
 	})
 
-	app.Listen(":3000")
+	app.Get("/neighbors/:nodeAddr", func(c *fiber.Ctx) error { // get neighbors of a node in network
+		url := fmt.Sprintf("http://localhost:%s/neighbors", c.Params("nodeAddr"))
+		go http.Get(url)
+		return c.SendString("OK")
+	})
+
+	app.Get("/chain/:nodeAddr", func(c *fiber.Ctx) error { // list chain of a node in network
+		url := fmt.Sprintf("http://localhost:%s/listChain", c.Params("nodeAddr"))
+		go http.Get(url)
+		return c.SendString("OK")
+	})
+
+	app.Listen(fmt.Sprintf(":%d", config.GlobalConfig.NetworkConf.WebPort))
 }

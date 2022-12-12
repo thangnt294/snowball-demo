@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"encoding/json"
@@ -19,15 +19,7 @@ type CreateTxRequest struct {
 	Tx int `json:"tx"`
 }
 
-type myHTTPHandler func(w http.ResponseWriter, r *http.Request, node *Node)
-
-func (node *Node) handle(handleF myHTTPHandler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		handleF(w, r, node)
-	}
-}
-
-func readJSONRequest(r *http.Request, v interface{}) error {
+func ReadJSONRequest(r *http.Request, v interface{}) error {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
@@ -39,7 +31,7 @@ func readJSONRequest(r *http.Request, v interface{}) error {
 	return nil
 }
 
-func readJSONResponse(r *http.Response, v interface{}) error {
+func ReadJSONResponse(r *http.Response, v interface{}) error {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
@@ -51,7 +43,7 @@ func readJSONResponse(r *http.Response, v interface{}) error {
 	return nil
 }
 
-func writeJSONResponse(w http.ResponseWriter, r *http.Request, v interface{}) {
+func WriteJSONResponse(w http.ResponseWriter, r *http.Request, v interface{}) {
 	resJson, err := json.Marshal(v)
 	if err != nil {
 		log.Printf("Error writing response: %v", err)

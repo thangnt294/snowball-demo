@@ -1,35 +1,40 @@
-package main
+package network
 
 import (
+	"ava/api"
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"math/rand"
+	"net/http"
 )
+
+type TxValidation struct {
+	Node *Node // The node trying to validate tx
+	Tx   int   // Transaction to be validated
+	Pref bool  // Current preference
+}
 
 type DecisionOnTx struct {
 	Decision int
 	Tx       int
 }
 
-type TxValidation struct {
-	Node *Node // The node trying to validate this tx
-	Tx   int   // Transaction to be validated
-	Pref bool  // Current preference
-}
-
 const (
-	NEW = iota
-	WAITING
-	INVALID
-	VALID
+	DECISION_NEW = iota
+	DECISION_WAITING
+	DECISION_INVALID
+	DECISION_VALID
 )
 
 // decideOnTx decides if the Tx is valid or not, then sends the decision back to decisionChan.
-func (txValidation *TxValidation) decideOnTx() {
+func (txValidation *TxValidation) DecideOnTx() {
 	var decision int
 	isValid := txValidation.snowBall()
 	if isValid {
-		decision = VALID
+		decision = DECISION_VALID
 	} else {
-		decision = INVALID
+		decision = DECISION_INVALID
 	}
 	txValidation.Node.DecisionChan <- DecisionOnTx{Decision: decision, Tx: txValidation.Tx}
 }
@@ -91,6 +96,28 @@ func (txValidation *TxValidation) snowBall() bool {
 	}
 
 	return decision
+}
+
+// askToValidateTx sends a request to validate a tx to a node.
+func askToValidateTx(nodeAddr int, tx int, resChan chan<- bool, errChan chan<- error) {
+	myMsg := api.TxValidationRequest{Tx: tx}
+	jsonBody, err := json.Marshal(myMsg)
+	if err != nil {
+		errChan <- err
+	}
+	url := fmt.Sprintf("http://localhost:%d/validate", nodeAddr)
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		errChan <- err
+	}
+	var res api.TxValidationResponse
+	err = api.ReadJSONResponse(resp, &res)
+	if err != nil {
+		errChan <- err
+		return
+	}
+
+	resChan <- res.Pref
 }
 
 // randomNodesToAsk randomizes and returns a list of nodes from the neighbor list to ask.

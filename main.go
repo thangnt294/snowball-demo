@@ -1,20 +1,21 @@
 package main
 
 import (
+	"ava/config"
+	"ava/network"
+	"ava/web"
 	"fmt"
 	"math/rand"
 	"time"
 )
-
-var config Config
 
 func init() {
 	rand.Seed(int64(time.Now().Nanosecond()))
 }
 
 func main() {
-	readConfig("ava.conf", &config)
-	fmt.Printf("Read the following config: %#v\n", config)
-	network := buildNetwork(config.NetworkConf.Nodes)
-	startWebServer(network)
+	config.ReadConfig("ava.conf", &config.GlobalConfig)
+	fmt.Printf("Read the following config: %#v\n", config.GlobalConfig)
+	network := network.BuildNetwork(config.GlobalConfig.NetworkConf.Size)
+	web.StartWebServer(network)
 }
